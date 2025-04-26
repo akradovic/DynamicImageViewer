@@ -26,7 +26,8 @@ private slots:
     void slideshowAdvance();
     void setSlideshowInterval();
     void showKeyboardShortcuts();
-
+    void toggleFavoritesMode();  // ADD THIS LINE
+    void toggleCurrentImageFavorite();  // ADD THIS LINE
     // Lines 15-22: MainWindow.h - Add to private member variables
 private:
     void setupUI();

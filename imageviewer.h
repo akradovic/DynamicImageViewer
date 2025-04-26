@@ -40,6 +40,14 @@ public:
     void centerOnNextImage();
     void rotateCurrentImageLeft();
     void rotateCurrentImageRight();
+    void loadFavorites(const QString &filePath = QString());
+    void saveFavorites();
+    void toggleFavoritesMode();
+    void toggleCurrentImageFavorite();
+    bool isShowingOnlyFavorites() const { return m_showOnlyFavorites; }
+    bool isImageFavorite(const QString &path) const { return m_favorites.contains(path); }
+    ImageLoader* getImageLoader() { return m_imageLoader; }  // ADD THIS METHOD
+
 
 signals:
     void currentImageChanged(int index);
@@ -51,15 +59,26 @@ protected:
 private:
     ImageViewerContent *m_content;
     ImageLoader *m_imageLoader;
-
-    // Make ImageViewerContent a friend class to access private members
-    friend class ImageViewerContent;
+    QVector<QString> m_allImagePaths;    // Store all loaded images
+    // Member variables
     ImageViewer *m_parent;
-    QVector<QString> m_imagePaths;  // Ensure this is properly declared
+    QVector<QString> m_imagePaths;
     QHash<int, ImageInfo> m_images;
     QSet<int> m_visibleIndexes;
     int m_currentScrollPosition = 0;
     const int m_visibleMargin = 1000;
+
+    // Favorite icon properties
+    QPixmap m_favoriteIcon;
+    const int m_favoriteIconSize = 32;
+    const int m_favoriteIconMargin = 10;
+
+    QSet<QString> m_favorites;  // Track favorites by path
+    QString m_favoritesFilePath;
+    bool m_showOnlyFavorites = false;
+
+    friend class ImageViewerContent;
+
 };
 
 class ImageViewerContent : public QWidget
@@ -78,6 +97,9 @@ public:
     void centerOnPreviousImage();          // Changed from private to public
     void centerOnClosestLeftImage();       // Changed from private to public
     void centerOnClosestRightImage();      // Changed from private to public
+    void constrainPanOffset();
+    int findClosestImageIndex();
+    const QVector<QString>& getImagePaths() const { return m_imagePaths; }
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -100,6 +122,11 @@ private:
     int m_currentScrollPosition = 0;
     const int m_visibleMargin = 1000;
 
+    // Favorite icon properties
+    QPixmap m_favoriteIcon;
+    const int m_favoriteIconSize = 32;
+    const int m_favoriteIconMargin = 10;
+
     // Zoom and pan state tracking
     float m_zoomFactor = 1.0f;
     QPoint m_panOffset = QPoint(0, 0);
@@ -110,7 +137,6 @@ private:
     QHash<int, int> m_imageRotations;
 
     // Private methods
-    int findClosestImageIndex();
     void loadVisibleImages();
     void unloadInvisibleImages();
     void updateLayout();

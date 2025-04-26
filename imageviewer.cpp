@@ -23,12 +23,15 @@
 #include <QMimeData>
 #include <QUrl>
 #include <QApplication>
+#include <QDir>
+#include <QMessageBox>
 
 // Lines 20-30: Fix constructor initialization
 ImageViewer::ImageViewer(QWidget *parent)
     : QScrollArea(parent)
     , m_content(new ImageViewerContent(this))
-    , m_imageLoader(new ImageLoader(this))  // Fixed initialization
+    , m_imageLoader(new ImageLoader(this))
+    , m_favoritesFilePath(QDir::homePath() + "/.image_viewer_favorites.txt")
 {
     setWidget(m_content);
     setWidgetResizable(true);
@@ -46,6 +49,9 @@ ImageViewer::ImageViewer(QWidget *parent)
 
     // Enable drag and drop
     setAcceptDrops(true);
+
+    // Load favorites
+    loadFavorites();
 }
 
 ImageViewer::~ImageViewer()
@@ -69,23 +75,8 @@ void ImageViewer::centerOnNextImage()
     m_content->centerOnNextImage();
 }
 
-void ImageViewer::setImagePaths(const QList<QString> &paths)
-{
-    // Convert QList to QVector for internal use
-    QVector<QString> vectorPaths;
-    for (const QString &path : paths) {
-        vectorPaths.append(path);
-    }
 
-    // Forward to content widget
-    m_content->setImagePaths(vectorPaths);
-
-    // Emit signal for current image (first image)
-    if (!paths.isEmpty()) {
-        emit currentImageChanged(0);
-    }
-}
-
+// imageviewer.cpp - MODIFY setImagePaths method (Line 150-155)
 void ImageViewerContent::setImagePaths(const QList<QString> &paths)
 {
     // Convert QList to QVector for internal storage
@@ -100,17 +91,55 @@ void ImageViewerContent::setImagePaths(const QList<QString> &paths)
     updateVisibleImages();
 
     // Connect to image loader using proper syntax
-    connect(m_parent->m_imageLoader, &ImageLoader::imageLoaded,
+    connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
             this, &ImageViewerContent::onImageLoaded);
 }
 
-void ImageViewer::resizeEvent(QResizeEvent *event)
+// ImageViewer.cpp - MODIFY resizeEvent to add constraint check
+void ImageViewerContent::resizeEvent(QResizeEvent *event)
 {
-    QScrollArea::resizeEvent(event);
-    m_content->updateVisibleImages();
+    QWidget::resizeEvent(event);
+
+    // Process height changes for best-fit recalculation
+    if (event->oldSize().height() != height()) {
+        int totalWidth = 0;
+        int currentPos = m_parent->horizontalScrollBar()->value();
+        double scrollRatio = (double)currentPos / (double)maximumWidth();
+
+        const int viewportHeight = height();
+
+        // Recalculate all image positions with best-fit dimensions
+        for (int i = 0; i < m_imagePaths.size(); ++i) {
+            if (m_images.contains(i)) {
+                ImageInfo &info = m_images[i];
+
+                // Use actual image size when available
+                QSize imageSize = info.loaded ? info.pixmap.size() : QSize(16, 9);
+
+                // Calculate proper rectangle with best-fit dimensions
+                info.rect = calculateImageRect(imageSize, totalWidth, viewportHeight);
+
+                // Update running width total
+                totalWidth += info.rect.width();
+            }
+        }
+
+        // Update content width
+        setMinimumWidth(totalWidth);
+
+        // Apply constraint to ensure image stays fully visible
+        constrainPanOffset();
+
+        // Restore approximate scroll position
+        m_parent->horizontalScrollBar()->setValue(
+            static_cast<int>(scrollRatio * totalWidth)
+            );
+    }
+
+    // Update visible images
+    updateVisibleImages();
 }
 
-// ImageViewer.cpp - MODIFY ImageViewerContent constructor to enable keyboard focus
 ImageViewerContent::ImageViewerContent(ImageViewer *parent)
     : QWidget(parent)
     , m_parent(parent)
@@ -122,8 +151,37 @@ ImageViewerContent::ImageViewerContent(ImageViewer *parent)
     setFocusPolicy(Qt::StrongFocus);
 
     // Connect to the image loader
-    connect(m_parent->m_imageLoader, &ImageLoader::imageLoaded,
+    connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
             this, &ImageViewerContent::onImageLoaded);
+
+    // Load favorite icon
+    m_favoriteIcon = QPixmap(":/icons/favorite.png");
+
+    // If icon resource doesn't exist, create a simple star icon
+    if (m_favoriteIcon.isNull()) {
+        m_favoriteIcon = QPixmap(m_favoriteIconSize, m_favoriteIconSize);
+        m_favoriteIcon.fill(Qt::transparent);
+
+        QPainter painter(&m_favoriteIcon);
+        painter.setRenderHint(QPainter::Antialiasing);
+
+        // Draw a yellow star
+        painter.setPen(QPen(QColor(50, 50, 0), 1));
+        painter.setBrush(QColor(255, 215, 0));
+
+        QPolygonF star;
+        const int points = 5;
+        const double PI = 3.14159265358979323846;
+
+        for (int i = 0; i < points * 2; ++i) {
+            double radius = (i % 2 == 0) ? m_favoriteIconSize/2.0 : m_favoriteIconSize/4.0;
+            double angle = i * PI / points;
+            star << QPointF(m_favoriteIconSize/2.0 + radius * sin(angle),
+                            m_favoriteIconSize/2.0 - radius * cos(angle));
+        }
+
+        painter.drawPolygon(star);
+    }
 }
 
 ImageViewerContent::~ImageViewerContent()
@@ -251,7 +309,7 @@ void ImageViewerContent::loadVisibleImages()
         // If not loaded and not currently loading
         if (!info.loaded && !info.loading) {
             info.loading = true;
-            m_parent->m_imageLoader->loadImage(index, m_imagePaths[index]);
+            m_parent->getImageLoader()->loadImage(index, m_imagePaths[index]);
         }
     }
 }
@@ -357,47 +415,10 @@ void ImageViewerContent::wheelEvent(QWheelEvent *event)
     }
 }
 
-
-// ImageViewer.cpp - REPLACE resizeEvent method with best-fit handling
-void ImageViewerContent::resizeEvent(QResizeEvent *event)
+void ImageViewer::resizeEvent(QResizeEvent *event)
 {
-    QWidget::resizeEvent(event);
-
-    // Process height changes for best-fit recalculation
-    if (event->oldSize().height() != height()) {
-        int totalWidth = 0;
-        int currentPos = m_parent->horizontalScrollBar()->value();
-        double scrollRatio = (double)currentPos / (double)maximumWidth();
-
-        const int viewportHeight = height();
-
-        // Recalculate all image positions with best-fit dimensions
-        for (int i = 0; i < m_imagePaths.size(); ++i) {
-            if (m_images.contains(i)) {
-                ImageInfo &info = m_images[i];
-
-                // Use actual image size when available
-                QSize imageSize = info.loaded ? info.pixmap.size() : QSize(16, 9);
-
-                // Calculate proper rectangle with best-fit dimensions
-                info.rect = calculateImageRect(imageSize, totalWidth, viewportHeight);
-
-                // Update running width total
-                totalWidth += info.rect.width();
-            }
-        }
-
-        // Update content width
-        setMinimumWidth(totalWidth);
-
-        // Restore approximate scroll position
-        m_parent->horizontalScrollBar()->setValue(
-            static_cast<int>(scrollRatio * totalWidth)
-            );
-    }
-
-    // Update visible images
-    updateVisibleImages();
+    QScrollArea::resizeEvent(event);
+    m_content->updateVisibleImages();
 }
 
 // ImageViewer.cpp - MODIFY keyPressEvent with zoom capability
@@ -418,6 +439,22 @@ void ImageViewerContent::keyPressEvent(QKeyEvent *event)
             event->accept();
             return;
         }
+    }
+
+    // Check for favorites mode toggle with Ctrl+F
+    if (event->modifiers() & Qt::ControlModifier) {
+        if (event->key() == Qt::Key_F) {
+            m_parent->toggleFavoritesMode();
+            event->accept();
+            return;
+        }
+    }
+
+    // Check for adding to favorites with F key
+    if (event->key() == Qt::Key_F && !(event->modifiers() & Qt::ControlModifier)) {
+        m_parent->toggleCurrentImageFavorite();
+        event->accept();
+        return;
     }
 
     // Handle other navigation keys
@@ -510,9 +547,10 @@ void ImageViewer::centerOnImageIndex(int index)
     m_content->centerOnSpecificImage(index);
 }
 
+// ImageViewer.cpp - MODIFY centerOnSpecificImage method to add constraint check
 void ImageViewerContent::centerOnSpecificImage(int index)
 {
-    if (this->m_imagePaths.isEmpty() || !m_images.contains(index))  // Add 'this->' to clarify member variable
+    if (this->m_imagePaths.isEmpty() || !m_images.contains(index))
         return;
 
     // Get the image rectangle
@@ -521,6 +559,9 @@ void ImageViewerContent::centerOnSpecificImage(int index)
     // Reset zoom and pan when navigating to a specific image
     m_zoomFactor = 1.0f;
     m_panOffset = QPoint(0, 0);
+
+    // Apply boundary constraints to ensure full visibility
+    constrainPanOffset();
 
     // Calculate position to center the image
     QScrollBar *hScrollBar = m_parent->horizontalScrollBar();
@@ -538,6 +579,7 @@ void ImageViewerContent::centerOnSpecificImage(int index)
     // Emit signal for current image change
     emit m_parent->currentImageChanged(index);
 }
+
 
 int ImageViewerContent::findClosestImageIndex()
 {
@@ -714,7 +756,7 @@ void ImageViewerContent::centerOnClosestRightImage()
     }
 }
 
-// Lines 600-650: Update paintEvent with rotation support
+// imageviewer.cpp - MODIFY paintEvent method (lines 600-650)
 void ImageViewerContent::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
@@ -728,10 +770,11 @@ void ImageViewerContent::paintEvent(QPaintEvent *event)
 
     // Process only visible images with zoom applied
     for (int index : m_visibleIndexes) {
-        if (!m_images.contains(index))
+        if (!m_images.contains(index) || index >= m_imagePaths.size())
             continue;
 
         const ImageInfo &info = m_images[index];
+        const QString &imagePath = m_imagePaths[index];
 
         if (info.loaded && !info.pixmap.isNull()) {
             // Calculate zoomed rectangle
@@ -745,6 +788,33 @@ void ImageViewerContent::paintEvent(QPaintEvent *event)
                 if (rotation == 0) {
                     // No rotation - draw directly
                     painter.drawPixmap(zoomedRect, info.pixmap, info.pixmap.rect());
+
+                    // Draw favorite marker if applicable
+                    if (m_parent->isImageFavorite(imagePath)) {
+                        // Create star shape
+                        QPolygonF star;
+                        const int size = 24;
+                        const int margin = 10;
+                        const int points = 5;
+                        const double PI = 3.14159265358979323846;
+
+                        QPointF center(
+                            zoomedRect.right() - size/2 - margin,
+                            zoomedRect.top() + size/2 + margin
+                            );
+
+                        for (int i = 0; i < points * 2; ++i) {
+                            double radius = (i % 2 == 0) ? size/2.0 : size/4.0;
+                            double angle = i * PI / points;
+                            star << QPointF(center.x() + radius * sin(angle),
+                                            center.y() - radius * cos(angle));
+                        }
+
+                        // Draw star
+                        painter.setPen(QPen(QColor(50, 50, 0), 1));
+                        painter.setBrush(QColor(255, 215, 0, 220));
+                        painter.drawPolygon(star);
+                    }
                 } else {
                     // Apply rotation
                     painter.save();
@@ -761,6 +831,33 @@ void ImageViewerContent::paintEvent(QPaintEvent *event)
 
                     // Draw rotated image
                     painter.drawPixmap(rotatedRect, info.pixmap, info.pixmap.rect());
+
+                    // Draw favorite marker if applicable
+                    if (m_parent->isImageFavorite(imagePath)) {
+                        // Create rotated star shape
+                        QPolygonF star;
+                        const int size = 24;
+                        const int margin = 10;
+                        const int points = 5;
+                        const double PI = 3.14159265358979323846;
+
+                        QPointF center(
+                            rotatedRect.right() - size/2 - margin,
+                            rotatedRect.top() + size/2 + margin
+                            );
+
+                        for (int i = 0; i < points * 2; ++i) {
+                            double radius = (i % 2 == 0) ? size/2.0 : size/4.0;
+                            double angle = i * PI / points;
+                            star << QPointF(center.x() + radius * sin(angle),
+                                            center.y() - radius * cos(angle));
+                        }
+
+                        // Draw star
+                        painter.setPen(QPen(QColor(50, 50, 0), 1));
+                        painter.setBrush(QColor(255, 215, 0, 220));
+                        painter.drawPolygon(star);
+                    }
 
                     painter.restore();
                 }
@@ -782,38 +879,99 @@ void ImageViewerContent::paintEvent(QPaintEvent *event)
 }
 
 // ImageViewer.cpp - ADD zoom operation implementation methods
-void ImageViewerContent::applyZoom(float factor, const QPoint &centerPoint)
+// imageviewer.cpp - REPLACE applyZoom method (lines 702-729)
+// ImageViewer.cpp - REPLACE applyZoom method (lines 702-729)
+// ImageViewer.cpp - REPLACE applyZoom method (lines 702-729)
+void ImageViewerContent::applyZoom(float factor, const QPoint &viewportCenter)
 {
-    // Store current position under cursor for centering preservation
-    QPoint contentPoint = mapToZoomedContent(centerPoint);
+    // Get content point under the cursor before zoom
+    QPoint contentPoint = mapToZoomedContent(viewportCenter);
 
-    // Apply zoom with boundary constraints
+    // Store previous zoom for comparison
     float previousZoom = m_zoomFactor;
-    m_zoomFactor *= factor;
 
-    // Constrain zoom factor within operational limits
-    static const float MIN_ZOOM = 0.1f;
+    // Calculate proposed new zoom factor
+    float newZoomFactor = m_zoomFactor * factor;
+
+    // Calculate minimum zoom required to ensure content fits viewport
+    float minHeightZoom = static_cast<float>(m_parent->viewport()->height()) / height();
+    float minWidthZoom = static_cast<float>(m_parent->viewport()->width()) / width();
+
+    // Use the more restrictive of the two constraints
+    float windowMinZoom = qMax(minHeightZoom, minWidthZoom);
+
+    // Ensure we don't go below absolute minimum
+    static const float ABSOLUTE_MIN_ZOOM = 0.1f;
+    float effectiveMinZoom = qMax(windowMinZoom, ABSOLUTE_MIN_ZOOM);
+
+    // Upper bound for zoom
     static const float MAX_ZOOM = 10.0f;
-    m_zoomFactor = qBound(MIN_ZOOM, m_zoomFactor, MAX_ZOOM);
 
-    // If zoom factor changed, adjust pan offset to maintain center point
+    // Apply constrained zoom
+    m_zoomFactor = qBound(effectiveMinZoom, newZoomFactor, MAX_ZOOM);
+
+    // If zoom factor changed, adjust pan offset to maintain content point under cursor
     if (m_zoomFactor != previousZoom) {
-        // Calculate new position of contentPoint after zoom
-        QPoint newCenter = QPoint(
-            static_cast<int>(contentPoint.x() * m_zoomFactor / previousZoom),
-            static_cast<int>(contentPoint.y() * m_zoomFactor / previousZoom)
+        // Calculate how the content point would appear in viewport coordinates after zoom
+        QPoint viewportPointAfterZoom = QPoint(
+            static_cast<int>(contentPoint.x() * m_zoomFactor) + m_panOffset.x(),
+            static_cast<int>(contentPoint.y() * m_zoomFactor) + m_panOffset.y()
             );
 
-        // Calculate adjustment to keep contentPoint under the cursor
-        QPoint adjustment = newCenter - contentPoint;
+        // Calculate adjustment needed to keep content point under cursor
+        QPoint adjustment = viewportPointAfterZoom - viewportCenter;
 
         // Apply adjustment to pan offset
         m_panOffset -= adjustment;
+
+        // Apply boundary constraints to prevent image from moving outside viewport
+        constrainPanOffset();
 
         // Trigger layout update and viewport refresh
         updateLayout();
         update();
     }
+}
+
+// ImageViewer.cpp - ADD this new method after applyZoom
+void ImageViewerContent::constrainPanOffset()
+{
+    // Get viewport dimensions
+    int viewportWidth = m_parent->viewport()->width();
+    int viewportHeight = m_parent->viewport()->height();
+
+    // Calculate content dimensions after zoom
+    int zoomedWidth = static_cast<int>(width() * m_zoomFactor);
+    int zoomedHeight = static_cast<int>(height() * m_zoomFactor);
+
+    // Calculate the maximum allowed pan offsets to keep content visible
+    int minX, maxX, minY, maxY;
+
+    // For X axis constraints
+    if (zoomedWidth <= viewportWidth) {
+        // Content width is smaller than viewport - center it
+        minX = (viewportWidth - zoomedWidth) / 2;
+        maxX = minX;
+    } else {
+        // Content wider than viewport - allow panning within bounds
+        minX = viewportWidth - zoomedWidth;
+        maxX = 0;
+    }
+
+    // For Y axis constraints
+    if (zoomedHeight <= viewportHeight) {
+        // Content height is smaller than viewport - center it
+        minY = (viewportHeight - zoomedHeight) / 2;
+        maxY = minY;
+    } else {
+        // Content taller than viewport - allow panning within bounds
+        minY = viewportHeight - zoomedHeight;
+        maxY = 0;
+    }
+
+    // Apply constraints
+    m_panOffset.setX(qBound(minX, m_panOffset.x(), maxX));
+    m_panOffset.setY(qBound(minY, m_panOffset.y(), maxY));
 }
 
 void ImageViewerContent::applyFixedZoom(float newZoom, const QPoint &centerPoint)
@@ -850,6 +1008,13 @@ QPoint ImageViewerContent::mapToZoomedContent(const QPoint &viewportPoint) const
 // Lines 440-460: Update mouse event methods to use modern Qt
 void ImageViewerContent::mousePressEvent(QMouseEvent *event)
 {
+    // Check for middle-click to toggle favorite
+    if (event->button() == Qt::MiddleButton) {
+        m_parent->toggleCurrentImageFavorite();
+        event->accept();
+        return;
+    }
+
     // Initiate panning on left button press
     if (event->button() == Qt::LeftButton && m_zoomFactor > 1.0f) {
         m_isPanning = true;
@@ -861,6 +1026,7 @@ void ImageViewerContent::mousePressEvent(QMouseEvent *event)
     }
 }
 
+// ImageViewer.cpp - MODIFY mouseMoveEvent to add constraint check
 void ImageViewerContent::mouseMoveEvent(QMouseEvent *event)
 {
     // Process panning if active
@@ -870,6 +1036,9 @@ void ImageViewerContent::mouseMoveEvent(QMouseEvent *event)
 
         // Apply movement to pan offset
         m_panOffset += delta;
+
+        // Apply constraints to keep image fully visible
+        constrainPanOffset();
 
         // Update last position
         m_lastPanPosition = event->position().toPoint();  // Modern syntax
@@ -915,4 +1084,157 @@ void ImageViewerContent::rotateCurrentImage(int degrees)
 
     // Force redraw
     update();
+}
+
+// imageviewer.cpp - ADD loadFavorites method (after constructor)
+void ImageViewer::loadFavorites(const QString &filePath)
+{
+    // Use provided file path or default
+    QString path = filePath.isEmpty() ? m_favoritesFilePath : filePath;
+    m_favoritesFilePath = path;
+
+    // Clear existing favorites
+    m_favorites.clear();
+
+    // Read from file
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            QString line = in.readLine().trimmed();
+            if (!line.isEmpty()) {
+                m_favorites.insert(line);
+            }
+        }
+        file.close();
+    }
+}
+
+// imageviewer.cpp - ADD saveFavorites method (after loadFavorites)
+void ImageViewer::saveFavorites()
+{
+    QFile file(m_favoritesFilePath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        for (const QString &path : m_favorites) {
+            out << path << "\n";
+        }
+        file.close();
+    }
+}
+// imageviewer.cpp - ADD toggleFavoritesMode method (after saveFavorites)
+void ImageViewer::toggleFavoritesMode()
+{
+    // Toggle between showing all images or only favorites
+    m_showOnlyFavorites = !m_showOnlyFavorites;
+
+    // Handle case where we're showing only favorites
+    if (m_showOnlyFavorites) {
+        // Create list of favorites from all loaded images
+        QList<QString> favoritePaths;
+
+        for (const QString &path : m_allImagePaths) {
+            if (m_favorites.contains(path)) {
+                favoritePaths.append(path);
+            }
+        }
+
+        // Only proceed if we have favorites to display
+        if (!favoritePaths.isEmpty()) {
+            m_content->setImagePaths(favoritePaths);
+        } else {
+            // No favorites found, revert to normal mode
+            m_showOnlyFavorites = false;
+            QMessageBox::information(this, "No Favorites",
+                                     "You don't have any favorites in the current directory.");
+        }
+    } else {
+        // Convert back to normal mode - show all images
+        QList<QString> allPathsList;
+        for (const QString &path : m_allImagePaths) {
+            allPathsList.append(path);
+        }
+        m_content->setImagePaths(allPathsList);
+    }
+}
+
+// imageviewer.cpp - ADD toggleCurrentImageFavorite method (after toggleFavoritesMode)
+void ImageViewer::toggleCurrentImageFavorite()
+{
+    // Get current image index
+    int currentIndex = m_content->findClosestImageIndex();
+
+    // Verify index is valid
+    if (currentIndex < 0) {
+        return; // No current image
+    }
+
+    // Get the paths from the content widget
+    QVector<QString> currentPaths = m_content->getImagePaths();
+
+    // Verify index is within range
+    if (currentIndex >= currentPaths.size()) {
+        return; // Index out of bounds
+    }
+
+    // Get path of current image
+    QString path = currentPaths[currentIndex];
+
+    // Toggle favorite status
+    if (m_favorites.contains(path)) {
+        m_favorites.remove(path);
+
+        // If in favorites mode and removing a favorite, refresh view
+        if (m_showOnlyFavorites) {
+            toggleFavoritesMode(); // Turn off favorites mode
+            toggleFavoritesMode(); // Turn it back on with updated list
+        }
+    } else {
+        m_favorites.insert(path);
+    }
+
+    // Save to file
+    saveFavorites();
+
+    // Refresh display
+    m_content->update();
+}
+
+// imageviewer.cpp - REPLACE setImagePaths method (lines 70-85)
+void ImageViewer::setImagePaths(const QList<QString> &paths)
+{
+    // Store full list of paths
+    m_allImagePaths.clear();
+    for (const QString &path : paths) {
+        m_allImagePaths.append(path);
+    }
+
+    if (m_showOnlyFavorites) {
+        // Filter to only show favorites
+        QList<QString> favoritePaths;
+        for (const QString &path : m_allImagePaths) {
+            if (m_favorites.contains(path)) {
+                favoritePaths.append(path);
+            }
+        }
+
+        if (!favoritePaths.isEmpty()) {
+            // Pass only favorite paths to content
+            m_content->setImagePaths(favoritePaths);
+        } else {
+            // No favorites available, switch back to normal mode
+            m_showOnlyFavorites = false;
+            m_content->setImagePaths(paths);
+            QMessageBox::information(this, "No Favorites",
+                                     "No favorites found. Showing all images.");
+        }
+    } else {
+        // Normal mode - show all images
+        m_content->setImagePaths(paths);
+    }
+
+    // Emit signal for current image (first image)
+    if (!paths.isEmpty()) {
+        emit currentImageChanged(0);
+    }
 }

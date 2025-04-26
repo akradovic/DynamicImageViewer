@@ -80,6 +80,17 @@ void MainWindow::setupUI()
         m_imageViewer->rotateCurrentImageRight();
     });
 
+    QMenu *favoritesMenu = menuBar()->addMenu("&Favorites");
+
+    QAction *toggleFavoriteAction = favoritesMenu->addAction("&Add/Remove Current Image");
+    toggleFavoriteAction->setShortcut(Qt::Key_F);
+    connect(toggleFavoriteAction, &QAction::triggered, this, &MainWindow::toggleCurrentImageFavorite);
+
+    QAction *showFavoritesAction = favoritesMenu->addAction("&Show Only Favorites");
+    showFavoritesAction->setShortcut(Qt::CTRL + Qt::Key_F);
+    showFavoritesAction->setCheckable(true);
+    connect(showFavoritesAction, &QAction::triggered, this, &MainWindow::toggleFavoritesMode);
+
     // Lines 210-225: MainWindow.cpp - Add to setupUI method in menu creation
     // Add help menu
     QMenu *helpMenu = menuBar()->addMenu("&Help");
@@ -333,9 +344,11 @@ void MainWindow::showKeyboardShortcuts()
         {"F5", "Toggle Slideshow"},
         {"L", "Rotate Left"},
         {"R", "Rotate Right"},
+        {"F", "Toggle Current Image as Favorite"},  // ADD THIS LINE
+        {"Middle-Click", "Toggle Current Image as Favorite"},  // ADD THIS LINE
+        {"Ctrl + F", "Toggle Favorites Mode"},  // ADD THIS LINE
         {"F1", "Show Keyboard Shortcuts"}
     };
-
     table->setRowCount(shortcuts.size());
 
     for (int i = 0; i < shortcuts.size(); ++i) {
@@ -353,4 +366,23 @@ void MainWindow::showKeyboardShortcuts()
 
     // Show dialog
     dialog.exec();
+}
+
+void MainWindow::toggleFavoritesMode()
+{
+    m_imageViewer->toggleFavoritesMode();
+
+    // Update menu checkstate
+    QList<QAction*> actions = menuBar()->findChild<QMenu*>("&Favorites")->actions();
+    for (QAction* action : actions) {
+        if (action->text() == "&Show Only Favorites") {
+            action->setChecked(m_imageViewer->isShowingOnlyFavorites());
+            break;
+        }
+    }
+}
+
+void MainWindow::toggleCurrentImageFavorite()
+{
+    m_imageViewer->toggleCurrentImageFavorite();
 }
