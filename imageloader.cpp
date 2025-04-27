@@ -1,28 +1,9 @@
 // ImageLoader.cpp
+// Lines 1-95: Complete ImageLoader implementation
 #include "ImageLoader.h"
 #include <QImage>
-#include <QMetaType>
 #include <QDebug>
-#include <QDragEnterEvent>
-#include <QDropEvent>
-#include <QMimeData>
-#include <QUrl>
 #include <QFileInfo>
-
-// ImageLoadTask implementation
-class ImageLoadTaskPrivate : public QObject
-{
-    Q_OBJECT
-public:
-    explicit ImageLoadTaskPrivate(QObject *parent = nullptr) : QObject(parent) {}
-
-signals:
-    void loadCompleted(ImageLoadTask *task);
-};
-
-Q_GLOBAL_STATIC(ImageLoadTaskPrivate, taskPrivate)
-
-// Lines 4-26: Replace the ImageLoadTaskPrivate implementation with:
 
 ImageLoadTask::ImageLoadTask(int index, const QString &path)
     : QObject(nullptr), QRunnable()
@@ -34,8 +15,22 @@ ImageLoadTask::ImageLoadTask(int index, const QString &path)
 
 void ImageLoadTask::run()
 {
+    // Check if path is valid before loading
+    QFileInfo fileInfo(m_path);
+    if (!fileInfo.exists() || !fileInfo.isReadable()) {
+        qDebug() << "Error: Cannot read image file:" << m_path;
+        emit loadCompleted(m_index, QPixmap());
+        return;
+    }
+
     // Load the image in the background thread
     QImage image(m_path);
+
+    if (image.isNull()) {
+        qDebug() << "Error: Failed to load image:" << m_path;
+        emit loadCompleted(m_index, QPixmap());
+        return;
+    }
 
     // Scale down very large images to save memory
     const int MAX_DIMENSION = 4096;
@@ -48,13 +43,11 @@ void ImageLoadTask::run()
             );
     }
 
-    m_pixmap = QPixmap::fromImage(image);
+    QPixmap pixmap = QPixmap::fromImage(image);
 
     // Signal completion
-    emit loadCompleted(m_index, m_pixmap);
+    emit loadCompleted(m_index, pixmap);
 }
-
-// Lines 27-85: Replace the ImageLoader implementation with:
 
 ImageLoader::ImageLoader(QObject *parent)
     : QObject(parent)
@@ -73,26 +66,16 @@ void ImageLoader::loadImage(int index, const QString &path)
 {
     QMutexLocker locker(&m_mutex);
 
-    // Create a task and start it
+    // Create a task
     ImageLoadTask *task = new ImageLoadTask(index, path);
 
-    // Connect the task's signal to our signal
+    // Connect the task's signal directly to our signal
     connect(task, &ImageLoadTask::loadCompleted,
             this, &ImageLoader::imageLoaded,
             Qt::QueuedConnection);
 
+    // Start the task
     m_threadPool.start(task);
-}
-
-// Remove line 86: #include "ImageLoader.moc"
-
-void ImageLoader::handleLoadCompleted(ImageLoadTask *task)
-{
-    if (!task)
-        return;
-
-    // Emit the signal with the loaded pixmap
-    emit imageLoaded(task->index(), task->pixmap());
 }
 
 #include "imageloader.moc"

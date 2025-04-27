@@ -26,13 +26,15 @@
 #include <QDir>
 #include <QMessageBox>
 
-// Lines 20-30: Fix constructor initialization
+// Lines 25-45: ImageViewer constructor implementation
 ImageViewer::ImageViewer(QWidget *parent)
     : QScrollArea(parent)
-    , m_content(new ImageViewerContent(this))
+    , m_content(nullptr)  // Initialize to nullptr first
     , m_imageLoader(new ImageLoader(this))
     , m_favoritesFilePath(QDir::homePath() + "/.image_viewer_favorites.txt")
 {
+    // Create content after m_imageLoader is initialized
+    m_content = new ImageViewerContent(this);
     setWidget(m_content);
     setWidgetResizable(true);
 
@@ -76,9 +78,15 @@ void ImageViewer::centerOnNextImage()
 }
 
 
-// imageviewer.cpp - MODIFY setImagePaths method (Line 150-155)
+// Lines 150-170: setImagePaths method with fixed signal connections
 void ImageViewerContent::setImagePaths(const QList<QString> &paths)
 {
+    // Disconnect previous connections to avoid multiple signals
+    if (m_parent && m_parent->getImageLoader()) {
+        disconnect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
+                   this, &ImageViewerContent::onImageLoaded);
+    }
+
     // Convert QList to QVector for internal storage
     m_imagePaths.clear();
     for (const QString &path : paths) {
@@ -91,8 +99,11 @@ void ImageViewerContent::setImagePaths(const QList<QString> &paths)
     updateVisibleImages();
 
     // Connect to image loader using proper syntax
-    connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
-            this, &ImageViewerContent::onImageLoaded);
+    if (m_parent && m_parent->getImageLoader()) {
+        connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
+                this, &ImageViewerContent::onImageLoaded,
+                Qt::UniqueConnection);
+    }
 }
 
 // ImageViewer.cpp - MODIFY resizeEvent to add constraint check
@@ -150,10 +161,12 @@ ImageViewerContent::ImageViewerContent(ImageViewer *parent)
     // Enable keyboard focus for key events
     setFocusPolicy(Qt::StrongFocus);
 
-    // Connect to the image loader
-    connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
-            this, &ImageViewerContent::onImageLoaded);
-
+    // Add null check and use Qt::UniqueConnection
+    if (m_parent && m_parent->getImageLoader()) {
+        connect(m_parent->getImageLoader(), &ImageLoader::imageLoaded,
+                this, &ImageViewerContent::onImageLoaded,
+                Qt::UniqueConnection);
+    }
     // Load favorite icon
     m_favoriteIcon = QPixmap(":/icons/favorite.png");
 
@@ -338,48 +351,55 @@ void ImageViewerContent::unloadInvisibleImages()
     }
 }
 
-// Lines 260-300: Add missing slot method
+// Lines 260-300: onImageLoaded with additional safety checks
 void ImageViewerContent::onImageLoaded(int index, const QPixmap &pixmap)
 {
-    if (!m_images.contains(index))
+    // Safety checks
+    if (!m_images.contains(index) || index < 0 || index >= m_imagePaths.size()) {
         return;
-
-    ImageInfo &info = m_images[index];
-    info.pixmap = pixmap;
-    info.loaded = true;
-    info.loading = false;
-
-    // Update rect based on actual image size
-    if (!pixmap.isNull()) {
-        // Store current horizontal position
-        int xPos = info.rect.left();
-
-        // Calculate best-fit rectangle based on actual image dimensions
-        info.rect = calculateImageRect(pixmap.size(), xPos, height());
-
-        // Determine width change for subsequent image repositioning
-        int newRight = info.rect.right();
-        int oldRight = xPos + info.rect.width();
-        int widthDiff = newRight - oldRight;
-
-        // Reposition all subsequent images if width changed
-        if (widthDiff != 0) {
-            int currentX = info.rect.right();
-
-            for (int i = index + 1; i < m_imagePaths.size(); ++i) {
-                if (m_images.contains(i)) {
-                    ImageInfo &nextInfo = m_images[i];
-                    nextInfo.rect.moveLeft(currentX);
-                    currentX += nextInfo.rect.width();
-                }
-            }
-
-            // Update content width
-            setMinimumWidth(minimumWidth() + widthDiff);
-        }
     }
 
-    // Request repaint
+    ImageInfo &info = m_images[index];
+    info.loading = false;
+
+    // Handle invalid pixmaps gracefully
+    if (pixmap.isNull()) {
+        info.loaded = false;
+        update(info.rect);
+        return;
+    }
+
+    info.pixmap = pixmap;
+    info.loaded = true;
+
+    // Update rect based on actual image size
+    int xPos = info.rect.left();
+
+    // Calculate best-fit rectangle based on actual image dimensions
+    info.rect = calculateImageRect(pixmap.size(), xPos, height());
+
+    // Determine width change for subsequent image repositioning
+    int newRight = info.rect.right();
+    int oldRight = xPos + info.rect.width();
+    int widthDiff = newRight - oldRight;
+
+    // Reposition all subsequent images if width changed
+    if (widthDiff != 0) {
+        int currentX = info.rect.right();
+
+        for (int i = index + 1; i < m_imagePaths.size(); ++i) {
+            if (m_images.contains(i)) {
+                ImageInfo &nextInfo = m_images[i];
+                nextInfo.rect.moveLeft(currentX);
+                currentX += nextInfo.rect.width();
+            }
+        }
+
+        // Update content width
+        setMinimumWidth(qMax(minimumWidth() + widthDiff, 0));
+    }
+
+    // Request repaint only for the affected area
     update(info.rect);
 }
 

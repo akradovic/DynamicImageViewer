@@ -61,7 +61,6 @@ private:
     ImageLoader *m_imageLoader;
     QVector<QString> m_allImagePaths;    // Store all loaded images
     // Member variables
-    ImageViewer *m_parent;
     QVector<QString> m_imagePaths;
     QHash<int, ImageInfo> m_images;
     QSet<int> m_visibleIndexes;

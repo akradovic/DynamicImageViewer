@@ -8,11 +8,7 @@
 #include <QThreadPool>
 #include <QRunnable>
 #include <QMutex>
-
-
-
-// Lines 9-32: Replace the ImageLoadTask class
-
+// Lines 10-55: Complete ImageLoadTask and ImageLoader class declarations
 class ImageLoadTask : public QObject, public QRunnable
 {
     Q_OBJECT
@@ -48,12 +44,8 @@ public:
 signals:
     void imageLoaded(int index, const QPixmap &pixmap);
 
-private slots:
-    void handleLoadCompleted(ImageLoadTask *task);
-
 private:
     QThreadPool m_threadPool;
     QMutex m_mutex;
 };
-
 #endif // IMAGELOADER_H
