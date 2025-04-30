@@ -30,12 +30,12 @@ class ImageViewer : public QScrollArea
 {
     Q_OBJECT
 
+    // In imageviewer.h - ADD this to the public section of ImageViewer class
 public:
     explicit ImageViewer(QWidget *parent = nullptr);
     ~ImageViewer();
 
-    void setImagePaths(const QList<QString> &paths);  // Ensure it's QList, not QVector
-
+    void setImagePaths(const QList<QString> &paths);
     void centerOnImageIndex(int index);
     void centerOnNextImage();
     void rotateCurrentImageLeft();
@@ -46,7 +46,10 @@ public:
     void toggleCurrentImageFavorite();
     bool isShowingOnlyFavorites() const { return m_showOnlyFavorites; }
     bool isImageFavorite(const QString &path) const { return m_favorites.contains(path); }
-    ImageLoader* getImageLoader() { return m_imageLoader; }  // ADD THIS METHOD
+    ImageLoader* getImageLoader() { return m_imageLoader; }
+    int getCurrentIndex() const { return m_currentIndex; }  // ADD THIS METHOD
+    int findClosestImageIndex() const;
+
 
 
 signals:
@@ -60,6 +63,7 @@ private:
     ImageViewerContent *m_content;
     ImageLoader *m_imageLoader;
     QVector<QString> m_allImagePaths;    // Store all loaded images
+    int m_currentIndex = -1;             // ADD THIS LINE to track current image index
     // Member variables
     QVector<QString> m_imagePaths;
     QHash<int, ImageInfo> m_images;
@@ -77,7 +81,6 @@ private:
     bool m_showOnlyFavorites = false;
 
     friend class ImageViewerContent;
-
 };
 
 class ImageViewerContent : public QWidget
@@ -145,6 +148,12 @@ private:
     void applyZoom(float factor, const QPoint &centerPoint);
     void applyFixedZoom(float newZoom, const QPoint &centerPoint);
     QPoint mapToZoomedContent(const QPoint &viewportPoint) const;
+
+
+    // Passive scrolling state (ADD THESE LINES)
+    bool m_isPassiveScrolling = false;
+    QPoint m_lastScrollPosition;
+
 
 
 private slots:

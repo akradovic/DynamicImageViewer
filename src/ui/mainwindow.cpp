@@ -1,12 +1,14 @@
-// MainWindow.cpp
+// mainwindow.cpp
 #include "mainwindow.h"
+#include "imageviewer.h"
+
 #include <QDir>
 #include <QFileDialog>
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QVBoxLayout>
 #include <QMessageBox>
-#include <qevent.h>
+#include <QDragEnterEvent>
 #include <QMimeData>
 #include <QInputDialog>
 #include <QTimer>
@@ -16,6 +18,8 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QHBoxLayout>
+#include <QRandomGenerator>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -28,7 +32,6 @@ MainWindow::~MainWindow()
 {
 }
 
-// MainWindow.cpp - MODIFY setupUI method to add Random button
 void MainWindow::setupUI()
 {
     setWindowTitle("Dynamic Image Viewer");
@@ -38,7 +41,6 @@ void MainWindow::setupUI()
     QAction *openAction = fileMenu->addAction("&Open Directory...");
     connect(openAction, &QAction::triggered, this, &MainWindow::openDirectory);
 
-    // Lines 110-125: MainWindow.cpp - Add to setupUI method within the navigation menu section
     // Add navigation menu
     QMenu *navMenu = menuBar()->addMenu("&Navigation");
     QAction *randomAction = navMenu->addAction("&Random Image");
@@ -63,7 +65,6 @@ void MainWindow::setupUI()
     QVBoxLayout *layout = new QVBoxLayout(centralWidget);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    // Lines 150-170: MainWindow.cpp - Add to setupUI method in menu creation section
     // Add view menu
     QMenu *viewMenu = menuBar()->addMenu("&View");
 
@@ -91,7 +92,6 @@ void MainWindow::setupUI()
     showFavoritesAction->setCheckable(true);
     connect(showFavoritesAction, &QAction::triggered, this, &MainWindow::toggleFavoritesMode);
 
-    // Lines 210-225: MainWindow.cpp - Add to setupUI method in menu creation
     // Add help menu
     QMenu *helpMenu = menuBar()->addMenu("&Help");
 
@@ -101,8 +101,7 @@ void MainWindow::setupUI()
 
     // Create button bar
     QHBoxLayout *buttonLayout = new QHBoxLayout();
-    // In setupUI method, ensure the connection is as follows:
-    QPushButton *randomButton = new QPushButton("Random Image", this);
+    QPushButton *randomButton = new QPushButton("Random", this);
     connect(randomButton, &QPushButton::clicked, this, &MainWindow::navigateToRandomImage);
     buttonLayout->addStretch();
     buttonLayout->addWidget(randomButton);
@@ -112,10 +111,6 @@ void MainWindow::setupUI()
     layout->addWidget(m_imageViewer);
     setCentralWidget(centralWidget);
 
-    // Set status bar
-    // Lines 180-200: MainWindow.cpp - Modify setupUI method to add info display
-    // Set up status bar with image info
-    // Lines 110-120: Fix signal connection in setupUI
     // Set up status bar with image info
     statusBar()->setSizeGripEnabled(true);
     m_imageInfoLabel = new QLabel(this);
@@ -126,7 +121,8 @@ void MainWindow::setupUI()
 
     // Connect to ImageViewer for update notifications
     connect(m_imageViewer, &ImageViewer::currentImageChanged,
-            this, &MainWindow::updateImageInfo);}
+            this, &MainWindow::updateImageInfo);
+}
 
 void MainWindow::openDirectory()
 {
@@ -167,7 +163,6 @@ void MainWindow::loadImagesFromDirectory(const QString &dirPath)
     statusBar()->showMessage(QString("Loaded %1 images").arg(m_imagePaths.size()));
 }
 
-// MainWindow.cpp - ADD implementation after existing methods
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
     // Verify mime data contains valid URLs
@@ -220,34 +215,19 @@ void MainWindow::dropEvent(QDropEvent *event)
 
 void MainWindow::navigateToRandomImage()
 {
-    // Safety check for empty image list
-    if (m_imagePaths.isEmpty()) {
-        QMessageBox::information(this, "No Images",
-                                 "No images are currently loaded. Please open a directory first.");
+    if (m_imagePaths.isEmpty())
         return;
-    }
-
-    // Get current index
-    int currentIndex = m_imageViewer->findClosestImageIndex();
 
     // Generate random index using secure random number generation
     int randomIndex = QRandomGenerator::global()->bounded(m_imagePaths.size());
 
-    // Try to make sure we don't select the same image again if possible
-    if (m_imagePaths.size() > 1 && randomIndex == currentIndex) {
-        randomIndex = (randomIndex + 1) % m_imagePaths.size();
-    }
-
-    // Direct call to centerOnImageIndex method
+    // Delegate to image viewer for centering operation
     m_imageViewer->centerOnImageIndex(randomIndex);
 
     // Update status bar
-    QString statusMsg = QString("Random image: %1 of %2").arg(randomIndex + 1).arg(m_imagePaths.size());
-    statusBar()->showMessage(statusMsg);
+    statusBar()->showMessage(QString("Image %1 of %2").arg(randomIndex + 1).arg(m_imagePaths.size()));
 }
 
-
-// Lines 220-240: Fix slideshow timer connection
 void MainWindow::toggleSlideshow()
 {
     if (!m_slideshowTimer) {
@@ -289,7 +269,6 @@ void MainWindow::setSlideshowInterval()
     }
 }
 
-// Lines 280-310: MainWindow.cpp - Add image info display implementation
 void MainWindow::updateImageInfo(int index)
 {
     if (index < 0 || index >= m_imagePaths.size()) {
@@ -325,7 +304,6 @@ void MainWindow::updateImageInfo(int index)
     m_imageInfoLabel->setText(infoText);
 }
 
-// Lines 350-400: MainWindow.cpp - Add keyboard shortcuts help implementation
 void MainWindow::showKeyboardShortcuts()
 {
     // Create shortcuts dialog
@@ -358,9 +336,9 @@ void MainWindow::showKeyboardShortcuts()
         {"F5", "Toggle Slideshow"},
         {"L", "Rotate Left"},
         {"R", "Rotate Right"},
-        {"F", "Toggle Current Image as Favorite"},  // ADD THIS LINE
-        {"Middle-Click", "Toggle Current Image as Favorite"},  // ADD THIS LINE
-        {"Ctrl + F", "Toggle Favorites Mode"},  // ADD THIS LINE
+        {"F", "Toggle Current Image as Favorite"},
+        {"Middle-Click", "Toggle Current Image as Favorite"},
+        {"Ctrl + F", "Toggle Favorites Mode"},
         {"F1", "Show Keyboard Shortcuts"}
     };
     table->setRowCount(shortcuts.size());

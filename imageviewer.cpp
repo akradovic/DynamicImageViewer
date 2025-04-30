@@ -151,6 +151,15 @@ void ImageViewerContent::resizeEvent(QResizeEvent *event)
     updateVisibleImages();
 }
 
+int ImageViewer::findClosestImageIndex() const
+{
+    // Delegate to content widget
+    if (m_content) {
+        return m_content->findClosestImageIndex();
+    }
+    return -1;
+}
+
 ImageViewerContent::ImageViewerContent(ImageViewer *parent)
     : QWidget(parent)
     , m_parent(parent)
@@ -158,6 +167,14 @@ ImageViewerContent::ImageViewerContent(ImageViewer *parent)
     // Enable mouse tracking for proper event handling
     setMouseTracking(true);
 
+    // In ImageViewerContent constructor
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
+
+    m_isPanning = false;
+    m_isPassiveScrolling = false;
     // Enable keyboard focus for key events
     setFocusPolicy(Qt::StrongFocus);
 
@@ -404,7 +421,7 @@ void ImageViewerContent::onImageLoaded(int index, const QPixmap &pixmap)
 }
 
 
-// ImageViewer.cpp - REPLACE wheelEvent with enhanced implementation
+// In imageviewer.cpp - REPLACE the wheelEvent method in ImageViewerContent class
 void ImageViewerContent::wheelEvent(QWheelEvent *event)
 {
     // Check for zoom operation (Shift key modifier)
@@ -416,19 +433,23 @@ void ImageViewerContent::wheelEvent(QWheelEvent *event)
         int delta = event->angleDelta().y();
 
         // Calculate zoom factor based on scroll direction
-        // Use cube root for smoother zoom progression
-        float factor = (delta > 0) ? 1.05f : 0.95f;
+        // Use smaller increments for smoother zoom
+        float factor = (delta > 0) ? 1.1f : 0.9f;
 
         // Apply zoom with center point at cursor position
         applyZoom(factor, event->position().toPoint());
     } else {
-        // Handle normal horizontal scrolling
+        // Handle normal scrolling with enhanced sensitivity
         event->accept();
         QScrollBar *hScrollBar = m_parent->horizontalScrollBar();
 
-        // Determine scroll amount with velocity enhancement
+        // Determine scroll amount with adaptive sensitivity
+        // The faster the wheel scrolls, the larger the delta
         int scrollAmount = event->angleDelta().y();
-        int enhancedScrollAmount = static_cast<int>(-scrollAmount / 1.5);
+
+        // Scale the scroll amount for more natural feel
+        // Invert direction for standard scroll wheel behavior
+        int enhancedScrollAmount = static_cast<int>(-scrollAmount / 1.2);
 
         // Apply scroll position
         hScrollBar->setValue(hScrollBar->value() + enhancedScrollAmount);
@@ -558,23 +579,41 @@ void ImageViewerContent::dropEvent(QDropEvent *event)
     event->acceptProposedAction();
 }
 
-// ImageViewer.cpp - ADD implementation after existing methods
 void ImageViewer::centerOnImageIndex(int index)
 {
-    if (m_imagePaths.isEmpty() || index < 0 || index >= m_imagePaths.size())
+    // Validate index
+    if (m_imagePaths.isEmpty()) {
         return;
+    }
 
-    m_content->centerOnSpecificImage(index);
+    if (index < 0 || index >= m_imagePaths.size()) {
+        return;
+    }
+
+    // Store current index
+    m_currentIndex = index;
+
+    // Ensure the image is loaded
+    if (m_imageLoader) {
+        // Force load the image at the selected index if not already loaded
+        m_imageLoader->loadImage(index, m_imagePaths[index]);
+    }
+
+    // Directly delegate to content widget for centering
+    if (m_content) {
+        m_content->centerOnSpecificImage(index);
+    }
+
+    // Emit signal for current image change
+    emit currentImageChanged(index);
 }
 
-// ImageViewer.cpp - MODIFY centerOnSpecificImage method to add constraint check
 void ImageViewerContent::centerOnSpecificImage(int index)
 {
-    if (this->m_imagePaths.isEmpty() || !m_images.contains(index))
+    // Validate inputs
+    if (m_imagePaths.isEmpty() || index < 0 || index >= m_imagePaths.size()) {
         return;
-
-    // Get the image rectangle
-    const ImageInfo &imageInfo = m_images[index];
+    }
 
     // Reset zoom and pan when navigating to a specific image
     m_zoomFactor = 1.0f;
@@ -582,6 +621,42 @@ void ImageViewerContent::centerOnSpecificImage(int index)
 
     // Apply boundary constraints to ensure full visibility
     constrainPanOffset();
+
+    // Create a new image info entry if it doesn't exist yet
+    if (!m_images.contains(index)) {
+        // Initialize new image info with default size
+        ImageInfo info;
+        QSize defaultSize(800, 600); // Default placeholder size
+
+        // Calculate position for this image
+        int totalWidth = 0;
+        for (int i = 0; i < index; ++i) {
+            if (m_images.contains(i)) {
+                totalWidth += m_images[i].rect.width();
+            } else {
+                // Use estimated width for unloaded images
+                QRect estimatedRect = calculateImageRect(QSize(16, 9), totalWidth, height());
+                totalWidth += estimatedRect.width();
+            }
+        }
+
+        // Create a rectangle for this image
+        info.rect = calculateImageRect(defaultSize, totalWidth, height());
+        info.loaded = false;
+        info.loading = false;
+        m_images[index] = info;
+    }
+
+    // Get the image rectangle
+    const ImageInfo &imageInfo = m_images[index];
+
+    // Request image loading if not already loaded or loading
+    if (!imageInfo.loaded && !imageInfo.loading && m_parent && m_parent->getImageLoader()) {
+        m_parent->getImageLoader()->loadImage(index, m_imagePaths[index]);
+
+        // Mark as loading
+        m_images[index].loading = true;
+    }
 
     // Calculate position to center the image
     QScrollBar *hScrollBar = m_parent->horizontalScrollBar();
@@ -596,8 +671,11 @@ void ImageViewerContent::centerOnSpecificImage(int index)
     // Update layout with new zoom settings
     updateLayout();
 
-    // Emit signal for current image change
-    emit m_parent->currentImageChanged(index);
+    // Force update of visible images based on new position
+    updateVisibleImages();
+
+    // Force redraw
+    update();
 }
 
 
@@ -1025,34 +1103,46 @@ QPoint ImageViewerContent::mapToZoomedContent(const QPoint &viewportPoint) const
         );
 }
 
-// Lines 440-460: Update mouse event methods to use modern Qt
 void ImageViewerContent::mousePressEvent(QMouseEvent *event)
 {
+    // Always accept the event first to ensure it's processed
+    event->accept();
+
     // Check for middle-click to toggle favorite
     if (event->button() == Qt::MiddleButton) {
         m_parent->toggleCurrentImageFavorite();
-        event->accept();
         return;
     }
 
-    // Initiate panning on left button press
-    if (event->button() == Qt::LeftButton && m_zoomFactor > 1.0f) {
+    // Initiate panning on left button press - REMOVE ZOOM CONDITION
+    if (event->button() == Qt::LeftButton) {
         m_isPanning = true;
-        m_lastPanPosition = event->position().toPoint();  // Modern syntax
+        m_lastPanPosition = event->position().toPoint();
         setCursor(Qt::ClosedHandCursor);
-        event->accept();
-    } else {
-        QWidget::mousePressEvent(event);
+        return;
     }
+
+    // Enable passive scrolling with right mouse button
+    if (event->button() == Qt::RightButton) {
+        m_isPassiveScrolling = true;
+        m_lastScrollPosition = event->position().toPoint();
+        setCursor(Qt::SizeHorCursor);
+        return;
+    }
+
+    // Call base class implementation for other buttons
+    QWidget::mousePressEvent(event);
 }
 
-// ImageViewer.cpp - MODIFY mouseMoveEvent to add constraint check
 void ImageViewerContent::mouseMoveEvent(QMouseEvent *event)
 {
-    // Process panning if active
+    // Always accept the event first
+    event->accept();
+
+    // Process panning if active (left button held down)
     if (m_isPanning) {
         // Calculate movement delta
-        QPoint delta = event->position().toPoint() - m_lastPanPosition;  // Modern syntax
+        QPoint delta = event->position().toPoint() - m_lastPanPosition;
 
         // Apply movement to pan offset
         m_panOffset += delta;
@@ -1061,26 +1151,59 @@ void ImageViewerContent::mouseMoveEvent(QMouseEvent *event)
         constrainPanOffset();
 
         // Update last position
-        m_lastPanPosition = event->position().toPoint();  // Modern syntax
+        m_lastPanPosition = event->position().toPoint();
 
         // Refresh display
         update();
-        event->accept();
-    } else {
-        QWidget::mouseMoveEvent(event);
+        return;
     }
+
+    // Process passive scrolling (right button held down)
+    if (m_isPassiveScrolling) {
+        // Get current cursor position
+        QPoint currentPos = event->position().toPoint();
+
+        // Calculate delta from last position
+        QPoint delta = currentPos - m_lastScrollPosition;
+
+        // Calculate horizontal scroll amount based on X movement
+        int scrollAmount = -delta.x();  // Invert for natural feeling
+
+        // Apply scroll with sensitivity factor
+        QScrollBar *hScrollBar = m_parent->horizontalScrollBar();
+        hScrollBar->setValue(hScrollBar->value() + scrollAmount);
+
+        // Update last position
+        m_lastScrollPosition = currentPos;
+        return;
+    }
+
+    // Call base class implementation if no special handling
+    QWidget::mouseMoveEvent(event);
 }
 
+// In imageviewer.cpp - REPLACE the mouseReleaseEvent method in ImageViewerContent class
 void ImageViewerContent::mouseReleaseEvent(QMouseEvent *event)
 {
-    // End panning operation
+    // Always accept the event first
+    event->accept();
+
+    // End panning operation with left button
     if (event->button() == Qt::LeftButton && m_isPanning) {
         m_isPanning = false;
         setCursor(Qt::ArrowCursor);
-        event->accept();
-    } else {
-        QWidget::mouseReleaseEvent(event);
+        return;
     }
+
+    // End passive scrolling with right button
+    if (event->button() == Qt::RightButton && m_isPassiveScrolling) {
+        m_isPassiveScrolling = false;
+        setCursor(Qt::ArrowCursor);
+        return;
+    }
+
+    // Call base class implementation for other buttons
+    QWidget::mouseReleaseEvent(event);
 }
 
 
